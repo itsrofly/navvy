@@ -1,0 +1,130 @@
+name: Release & Publish to PyPI
+on:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: release-pypi
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check if version is already released
+    runs-on: ubuntu-latest 
+    permissions:
+      contents: read
+
+    outputs:
+        version: ${{ steps.version.outputs.version }}
+        tag: ${{ steps.version.outputs.tag }}
+        release_exists: ${{ steps.check_release.outputs.release_exists }}
+    
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Get version
+        id: version
+        shell: bash
+        run: |
+          VERSION=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Check if version is already released
+        id: check_release
+        shell: bash
+        env:
+            GH_TOKEN: ${{ secrets.github_token }}
+        run: |
+          if gh release view "${{ steps.version.outputs.tag }}" > /dev/null 2>&1; then
+            echo "Release ${{ steps.version.outputs.tag }} already exists. Skipping build and publish."
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Release ${{ steps.version.outputs.tag }} does not exist. Proceeding with build and publish."
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Build distribution
+    runs-on: ubuntu-latest
+    needs: check
+
+    if: needs.check.outputs.release_exists == 'false'
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install pypa/build
+        run: >-
+          python3 -m
+          pip install
+          --upgrade
+          build
+
+      - name: Build a binary wheel and a source tarball
+        run: python3 -m build
+
+      - name: Store the distribution packages
+        uses: actions/upload-artifact@v5
+        with:
+          name: python-package-distributions
+          path: dist/
+
+  release:
+    name: Create GitHub Release
+    needs:
+      - check
+      - build
+    runs-on: ubuntu-latest
+    permissions:
+        contents: write
+
+    steps:
+      - name: Download all the dists
+        uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+
+      - name: Create release and upload builds
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.check.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            dist/*.whl \
+            dist/*.tar.gz \
+            --target "${{ github.sha }}" \
+            --title "$TAG" \
+            --generate-notes
+                    
+  publish-to-pypi:
+    name: >-
+      Publish to PyPI
+    needs:
+      - check
+      - build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/navvy
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Download all the dists
+        uses: actions/download-artifact@v6
+        with:
+          name: python-package-distributions
+          path: dist/
+      - name: Publish distribution 📦 to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
