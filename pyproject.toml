@@ -4,7 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "navvy"
-version = "1.0.0"
+
+# 1.0.0, 2.0.0, 2.0.1 previously published and deleted on PyPI,
+# this version cannot be reused.
+version = "0.0.1" 
+
 description = "Automation tool for managing Git repositories with LLMs."
 readme = "README.md"
 authors = [{ name = "Rofly António", email = "mitangerofly@gmail.com" }]
